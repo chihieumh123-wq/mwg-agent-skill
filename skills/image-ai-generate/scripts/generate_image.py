@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Gọi OpenAI gpt-image-2 tạo ảnh raw 1536x864 (16:9).
+"""Gọi GPT Image 2.5 Flare qua OpenRouter tạo ảnh raw 1536x864 (16:9).
 
-Có --reference -> POST /v1/images/edits (giữ sản phẩm thật).
-Không có       -> POST /v1/images/generations (ảnh khái niệm).
+Endpoint duy nhất: POST https://openrouter.ai/api/v1/images
+Có --reference -> gửi kèm input_references (base64 data URL), giữ sản phẩm thật.
+Không có       -> text-to-image thuần.
 
 API TỐN PHÍ. Chỉ chạy sau khi user đã duyệt cost gate ở Bước 4 của SKILL.md.
 
-Key đọc từ root .env (OPEN_AI_KEY). Script không bao giờ in key ra output.
+Key OPEN_ROUTER_KEY đọc theo thứ tự: biến môi trường -> root .env. Script không bao giờ in key ra output.
 """
 
 import argparse
@@ -16,13 +17,14 @@ import os
 import sys
 import urllib.error
 import urllib.request
-import uuid
 
-MODEL = "gpt-image-2"
+MODEL = "openai/gpt-image-2.5-flare"
 GENERATE_SIZE = "1536x864"
 QUALITY = "medium"
-API_BASE = "https://api.openai.com/v1"
-ENV_KEY_NAME = "OPEN_AI_KEY"
+OUTPUT_FORMAT = "png"
+API_URL = "https://openrouter.ai/api/v1/images"
+ENV_KEY_NAME = "OPEN_ROUTER_KEY"
+ENV_FILES = [".env"]
 MAX_REFERENCES = 4
 
 # Ràng buộc cứng khi reference là ảnh sản phẩm thật. Mục đích: đổi bối cảnh
@@ -60,50 +62,36 @@ def find_repo_root(start):
         current = parent
 
 
+def read_env_value(env_path, name):
+    with open(env_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip().removeprefix("export ").strip() == name:
+                return value.strip().strip('"').strip("'")
+    return None
+
+
 def load_api_key():
-    """Đọc OPEN_AI_KEY từ env hoặc root .env. Không in giá trị ra ngoài."""
+    """Đọc OPEN_ROUTER_KEY từ env hoặc file .env của workspace. Không in giá trị ra ngoài."""
     key = os.environ.get(ENV_KEY_NAME)
     if key:
         return key.strip()
 
     root = find_repo_root(os.path.dirname(os.path.abspath(__file__))) or find_repo_root(os.getcwd())
     if not root:
-        sys.exit(f"ERROR: không tìm thấy .env chứa {ENV_KEY_NAME}.")
+        sys.exit("ERROR: không tìm thấy root workspace để đọc .env.")
 
-    env_path = os.path.join(root, ".env")
-    with open(env_path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            name, _, value = line.partition("=")
-            if name.strip() == ENV_KEY_NAME:
-                return value.strip().strip('"').strip("'")
+    for rel in ENV_FILES:
+        env_path = os.path.join(root, rel)
+        if os.path.isfile(env_path):
+            value = read_env_value(env_path, ENV_KEY_NAME)
+            if value:
+                return value
 
-    sys.exit(f"ERROR: {env_path} không có biến {ENV_KEY_NAME}.")
-
-
-def build_multipart(fields, files):
-    """Dựng body multipart/form-data thủ công (tránh phụ thuộc requests)."""
-    boundary = f"----mwgAIImage{uuid.uuid4().hex}"
-    body = bytearray()
-
-    for name, value in fields.items():
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        body.extend(f"{value}\r\n".encode())
-
-    for name, (filename, content, mime) in files:
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(
-            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
-        )
-        body.extend(f"Content-Type: {mime}\r\n\r\n".encode())
-        body.extend(content)
-        body.extend(b"\r\n")
-
-    body.extend(f"--{boundary}--\r\n".encode())
-    return bytes(body), f"multipart/form-data; boundary={boundary}"
+    sys.exit(f"ERROR: không file nào trong {ENV_FILES} có biến {ENV_KEY_NAME}.")
 
 
 def guess_mime(path):
@@ -115,47 +103,41 @@ def guess_mime(path):
     return "image/png"
 
 
-def call_api(url, data, content_type, api_key):
-    request = urllib.request.Request(url, data=data, method="POST")
+def to_data_url(path):
+    with open(path, "rb") as handle:
+        encoded = base64.b64encode(handle.read()).decode("ascii")
+    return f"data:{guess_mime(path)};base64,{encoded}"
+
+
+def call_api(payload, api_key):
+    request = urllib.request.Request(API_URL, data=json.dumps(payload).encode(), method="POST")
     request.add_header("Authorization", f"Bearer {api_key}")
-    request.add_header("Content-Type", content_type)
+    request.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(request, timeout=300) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
-        # Không echo header/key, chỉ body lỗi từ phía OpenAI.
-        sys.exit(f"ERROR: OpenAI trả HTTP {exc.code}\n{detail[:1500]}")
+        # Không echo header/key, chỉ body lỗi từ phía OpenRouter.
+        sys.exit(f"ERROR: OpenRouter trả HTTP {exc.code}\n{detail[:1500]}")
     except urllib.error.URLError as exc:
-        sys.exit(f"ERROR: không gọi được OpenAI: {exc.reason}")
+        sys.exit(f"ERROR: không gọi được OpenRouter: {exc.reason}")
 
 
-def generate(prompt, api_key):
-    payload = json.dumps({
+def request_image(prompt, references, api_key):
+    payload = {
         "model": MODEL,
         "prompt": prompt,
         "size": GENERATE_SIZE,
         "quality": QUALITY,
+        "output_format": OUTPUT_FORMAT,
         "n": 1,
-    }).encode()
-    return call_api(f"{API_BASE}/images/generations", payload, "application/json", api_key)
-
-
-def edit(prompt, references, api_key):
-    files = []
-    for path in references:
-        with open(path, "rb") as handle:
-            files.append(("image[]", (os.path.basename(path), handle.read(), guess_mime(path))))
-
-    fields = {
-        "model": MODEL,
-        "prompt": prompt,
-        "size": GENERATE_SIZE,
-        "quality": QUALITY,
-        "n": "1",
     }
-    body, content_type = build_multipart(fields, files)
-    return call_api(f"{API_BASE}/images/edits", body, content_type, api_key)
+    if references:
+        payload["input_references"] = [
+            {"type": "image_url", "image_url": {"url": to_data_url(path)}} for path in references
+        ]
+    return call_api(payload, api_key)
 
 
 def main():
@@ -165,7 +147,7 @@ def main():
     parser.add_argument("--prompt-file", help="File chứa prompt (ưu tiên)")
     parser.add_argument("--prompt", help="Prompt inline")
     parser.add_argument("--reference", nargs="*", default=[],
-                        help=f"1-{MAX_REFERENCES} ảnh reference; có thì gọi images/edits")
+                        help=f"1-{MAX_REFERENCES} ảnh reference; gửi kèm input_references")
     parser.add_argument("--preserve-product", action="store_true",
                         help="Chèn ràng buộc giữ nguyên sản phẩm thật (bắt buộc khi ref là ảnh SP)")
     parser.add_argument("--out", required=True, help="File ảnh raw đầu ra (.png)")
@@ -203,16 +185,13 @@ def main():
 
     api_key = load_api_key()
 
-    if args.reference:
-        print(f"[gpt-image-2] edits | {len(args.reference)} reference | {GENERATE_SIZE} | {QUALITY}")
-        result = edit(prompt, args.reference, api_key)
-    else:
-        print(f"[gpt-image-2] generations | no reference | {GENERATE_SIZE} | {QUALITY}")
-        result = generate(prompt, api_key)
+    kind = f"{len(args.reference)} reference" if args.reference else "no reference"
+    print(f"[{MODEL}] {kind} | {GENERATE_SIZE} | {QUALITY}")
+    result = request_image(prompt, args.reference, api_key)
 
     data = result.get("data") or []
     if not data:
-        sys.exit(f"ERROR: OpenAI không trả ảnh. Response keys: {list(result.keys())}")
+        sys.exit(f"ERROR: OpenRouter không trả ảnh. Response keys: {list(result.keys())}")
 
     b64 = data[0].get("b64_json")
     if not b64:

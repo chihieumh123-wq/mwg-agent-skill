@@ -23,7 +23,7 @@ Lấy từ workflow n8n `vTJmWPMVPL8G64dm` (`your n8n workflow folder`):
 
 | Thông số | Bằng chứng |
 | --- | --- |
-| `gpt-image-2`, `1536x864`, `quality: medium` | `scripts/check-image-model-config.js` assert 5 node generate |
+| `1536x864`, `quality: medium` | `scripts/check-image-model-config.js` assert 5 node generate (n8n vẫn dùng `gpt-image-2`; skill local đã chuyển sang `openai/gpt-image-2.5-flare` qua OpenRouter từ 24/09/2026, giữ nguyên size/quality) |
 | Resize `1200x675` | `docs/workflow-architecture.md`: "Throws if final binary is not exactly `1200x675`" |
 | Logo 64x64 tại (1124, 12) | node `Composite TGDD Logo`: `positionX: 1124, positionY: 12` |
 | Logo PNG | tự đặt vào `assets/logo.png`, hoặc trỏ `WATERMARK_LOGO_PATH` |
@@ -32,7 +32,7 @@ Mode `blog` (800x450) là mới, không có trong n8n.
 
 ## Vì sao generate 1536x864 rồi mới resize
 
-`gpt-image-2` chỉ nhận vài size cố định; `1536x864` là size 16:9 gần nhất. Generate
+Họ model GPT Image chỉ nhận vài size cố định; `1536x864` là size 16:9 gần nhất. Generate
 thẳng ở 1200x675 hay 800x450 không được hỗ trợ.
 
 Gate aspect ở `finalize_image.py` tồn tại để chặn ca model trả sai tỉ lệ — khi đó

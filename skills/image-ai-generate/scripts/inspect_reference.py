@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kiểm tra ảnh reference trước khi gọi OpenAI: phát hiện nền trắng, đọc kích thước.
+"""Kiểm tra ảnh reference trước khi gọi API tạo ảnh: phát hiện nền trắng, đọc kích thước.
 
 Dùng để quyết định ảnh nào cần đưa qua mode sửa nền (`--preserve-product`).
 Không gọi API nào, không tốn phí.
