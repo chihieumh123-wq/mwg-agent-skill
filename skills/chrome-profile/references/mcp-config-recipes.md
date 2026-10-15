@@ -88,26 +88,24 @@ CLI Skills / Scripts (CMS, MDM, chrome-profile) ──┘           │ (Local U
 
 ### Setup
 
-1. **Run a persistent background Hub daemon** (e.g. `devtools-hub.mjs`):
-   - The hub starts `chrome-devtools-mcp --autoConnect` once in the background.
-   - It listens on a local socket (e.g. `~/.cache/mwg-devtools-hub/hub.sock`, chmod 0600).
-   - It exposes a bridge command (`node devtools-hub.mjs bridge "$@"`) that proxies stdio to the socket.
+The multiplexer script is included directly in this skill at `scripts/devtools-hub.mjs`.
 
-2. **Create a bridge wrapper script** (e.g. `~/.local/bin/devtools-mcp-bridge`):
+1. **Install the Hub daemon and bridge wrapper (one command):**
    ```bash
-   #!/bin/sh
-   HUB="$HOME/.local/share/devtools-hub/devtools-hub.mjs"
-   MCP="${CHROME_DEVTOOLS_MCP_BIN:-/opt/homebrew/bin/chrome-devtools-mcp}"
-   [ -x "$MCP" ] || MCP="$(command -v chrome-devtools-mcp)"
-
-   if [ -f "$HUB" ] && command -v node >/dev/null 2>&1; then
-     exec node "$HUB" bridge "$@"
-   fi
-   exec "$MCP" "$@"
+   node skills/chrome-profile/scripts/devtools-hub.mjs install
    ```
-   *Fallback:* If the hub daemon is stopped or missing, the wrapper automatically falls back to raw `chrome-devtools-mcp` execution.
+   *What this does:*
+   - Copies `devtools-hub.mjs` to `~/.local/share/devtools-hub/devtools-hub.mjs` (system-wide user location).
+   - Automatically generates the executable bridge wrapper at `~/.local/bin/devtools-mcp-bridge`.
+   - If the hub daemon is ever stopped or missing, `devtools-mcp-bridge` automatically falls back to raw `chrome-devtools-mcp "$@"` execution.
 
-3. **Configure agent MCPs to point to the bridge wrapper** instead of raw `chrome-devtools-mcp`:
+2. **Start the background Hub daemon:**
+   ```bash
+   node ~/.local/share/devtools-hub/devtools-hub.mjs start
+   ```
+   *(Check status anytime with `node ~/.local/share/devtools-hub/devtools-hub.mjs status`, or stop with `stop`)*
+
+3. **Configure your agent runtime to point to the bridge wrapper:**
 
    Claude Code / AgentKit JSON (`~/.claude.json` or `~/.claude/.mcp.json`):
    ```jsonc
