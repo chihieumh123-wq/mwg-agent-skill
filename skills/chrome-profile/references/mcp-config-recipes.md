@@ -60,6 +60,75 @@ Then run a live probe through the runtime's Chrome DevTools MCP tools. In Claude
 
 ---
 
+## Recipe 1B — DevTools Hub / Bridge Wrapper (Recommended for Daily Use)
+
+**Why:** In the standard direct auto-connect setup (Recipe 1), every new agent session or CLI execution spawns an independent `chrome-devtools-mcp` process. Because each process represents a fresh debugger connection to Chrome, Chrome frequently prompts *"Allow remote debugging?"* (even if the user previously clicked Allow).
+
+A **DevTools Hub / Bridge daemon** eliminates this by maintaining **exactly ONE** `chrome-devtools-mcp --autoConnect` process running persistently in the background. All agent sessions and CLI commands connect to this hub through a local Unix domain socket (or named pipe).
+
+**Key benefits:**
+- **Approve once, run all day:** You approve Chrome's remote-control prompt once in the morning when the hub starts; all subsequent agent sessions and CLI scripts across all projects/codebases share that single debug connection with zero prompt interruptions.
+- **Multiplexed & safe:** `chrome-devtools-mcp` 1.8+ enables `--pageIdRouting` by default and serializes tool calls via internal mutex, allowing multiple client sessions to share one server safely without stealing active tabs.
+
+### Architecture
+
+```
+Agent Sessions (Claude, Codex, Antigravity)  ──┐
+                                               ├──> Bridge Wrapper (~/.local/bin/devtools-mcp-bridge)
+CLI Skills / Scripts (CMS, MDM, chrome-profile) ──┘           │ (Local Unix domain socket)
+                                                              ▼
+                                                   DevTools Hub Daemon (devtools-hub.mjs)
+                                                              │
+                                                              ▼
+                                                   1x chrome-devtools-mcp --autoConnect
+                                                              │ (CDP WebSocket)
+                                                              ▼
+                                                   Google Chrome (Daily running instance)
+```
+
+### Setup
+
+1. **Run a persistent background Hub daemon** (e.g. `devtools-hub.mjs`):
+   - The hub starts `chrome-devtools-mcp --autoConnect` once in the background.
+   - It listens on a local socket (e.g. `~/.cache/mwg-devtools-hub/hub.sock`, chmod 0600).
+   - It exposes a bridge command (`node devtools-hub.mjs bridge "$@"`) that proxies stdio to the socket.
+
+2. **Create a bridge wrapper script** (e.g. `~/.local/bin/devtools-mcp-bridge`):
+   ```bash
+   #!/bin/sh
+   HUB="$HOME/.local/share/devtools-hub/devtools-hub.mjs"
+   MCP="${CHROME_DEVTOOLS_MCP_BIN:-/opt/homebrew/bin/chrome-devtools-mcp}"
+   [ -x "$MCP" ] || MCP="$(command -v chrome-devtools-mcp)"
+
+   if [ -f "$HUB" ] && command -v node >/dev/null 2>&1; then
+     exec node "$HUB" bridge "$@"
+   fi
+   exec "$MCP" "$@"
+   ```
+   *Fallback:* If the hub daemon is stopped or missing, the wrapper automatically falls back to raw `chrome-devtools-mcp` execution.
+
+3. **Configure agent MCPs to point to the bridge wrapper** instead of raw `chrome-devtools-mcp`:
+
+   Claude Code / AgentKit JSON (`~/.claude.json` or `~/.claude/.mcp.json`):
+   ```jsonc
+   "mcpServers": {
+     "chrome-devtools": {
+       "command": "/Users/you/.local/bin/devtools-mcp-bridge",
+       "args": ["--autoConnect"]
+     }
+   }
+   ```
+
+   Codex TOML (`~/.codex/config.toml`):
+   ```toml
+   [mcp_servers.chrome-devtools]
+   command = "/Users/you/.local/bin/devtools-mcp-bridge"
+   args = ["--autoConnect"]
+   enabled = true
+   ```
+
+---
+
 ## Recipe 2 — Chrome DevTools MCP attach or auto-connect
 
 **Why:** Pure CDP. Works without a vendor-specific browser extension. Useful for CI, headless servers, or when auto-connect is not desired.
@@ -196,6 +265,7 @@ Then list Chrome DevTools MCP pages and select the page whose URL contains the r
 
 | Your situation | Recipe |
 |---|---|
+| Daily Chrome, multiple sessions/tools, want 1-time "Allow" per day | **Recipe 1B (DevTools Hub / Bridge Wrapper)** |
 | Daily Chrome with live work, multi-profile, agent must read tabs | **Recipe 1 (Chrome DevTools MCP auto-connect)** |
 | Fresh Chrome / CI / scripted, willing to relaunch | **Recipe 2 (Chrome DevTools MCP attach)** |
 | Just want tab visible to yourself, no agent read | `chrome-profile <key> <url> --force` |

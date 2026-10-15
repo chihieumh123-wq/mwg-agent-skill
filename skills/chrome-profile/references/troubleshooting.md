@@ -39,7 +39,11 @@ If the path IS correct but cookies are still empty:
 
 ## "chrome-devtools-mcp says Allow remote debugging again"
 
-Normal. The MCP attaches per session. If the user has not chosen "Always Allow," they will be prompted each time the MCP starts. Tell the user to click "Always Allow" if they want persistent attach.
+**Cause:** Every time an agent session opens or a CLI tool starts, a new child process of `chrome-devtools-mcp` is spawned. Chrome treats each spawned process as a separate debugger client and triggers the remote-control consent prompt. Even clicking "Always Allow" in the browser UI may not persist across different spawn paths or process lifetimes.
+
+**Solution:**
+1. **Short term:** Click "Always Allow" in Chrome's prompt if available.
+2. **Permanent solution (Recommended):** Use a **DevTools Hub / Bridge Wrapper** (see `mcp-config-recipes.md#recipe-1b`). The hub runs a single persistent `chrome-devtools-mcp` daemon and shares it across all agent sessions and CLIs via a local socket. You approve Chrome's prompt once at startup, and no subsequent sessions will trigger the prompt again.
 
 ## "`doctor` needs a live probe, but Chrome DevTools MCP is available"
 

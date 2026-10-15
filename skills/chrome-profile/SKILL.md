@@ -144,7 +144,10 @@ The CLI opens tabs in Chrome, but Chrome DevTools MCP must be able to read those
 
 Use this when the runtime can expose Chrome DevTools MCP without a fixed remote-debugging endpoint. This avoids depending on a runtime-specific browser extension.
 
-1. Configure Chrome DevTools MCP with auto-connect in the agent runtime's MCP config.
+> [!TIP]
+> **Avoid repeated "Allow remote debugging" prompts:** In standard setups, each new agent session or CLI execution starts a fresh `chrome-devtools-mcp` process, repeatedly triggering Chrome's remote-control prompt. To approve once and run all day, use a persistent background **DevTools Hub / Bridge Wrapper** (see `references/mcp-config-recipes.md#recipe-1b`). Point your agent's MCP config to the bridge wrapper (e.g. `~/.local/bin/devtools-mcp-bridge`) instead of running `npx chrome-devtools-mcp` directly.
+
+1. Configure Chrome DevTools MCP with auto-connect in the agent runtime's MCP config (or point to a persistent Hub bridge wrapper).
 2. Restart the agent session so the MCP server loads.
 3. Make a live page-list call. If Chrome prompts for remote-control approval, approve it and retry once.
 4. Run:
