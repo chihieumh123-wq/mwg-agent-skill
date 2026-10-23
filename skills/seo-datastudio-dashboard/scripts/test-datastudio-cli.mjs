@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { pageSource, parseArgs, reportIdFrom, stamp } from './run-datastudio-cli.mjs';
-import { McpClient, editorTabsFor, parseEvaluateResult, urlHasMarker } from './datastudio-mcp-transport.mjs';
+import { McpClient, NEUTRAL_URL, acquireSharedTab, editorTabsFor, parseEvaluateResult, sharedTabsFor, urlHasMarker } from './datastudio-mcp-transport.mjs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -243,4 +243,65 @@ test('McpClient nối hub qua socket khi hub đang chạy (không spawn chrome-d
 test('McpClient tiêm spawnFn thì tắt hub (giữ đường test MCP giả)', () => {
   const c = new McpClient({ spawnFn: () => {} });
   assert.equal(c.hub, 'off');
+});
+
+/** Client MCP giả cho phần tab: giữ danh sách tab, ghi lại mọi lời gọi, evaluate trả trạng thái tab. */
+function fakeTabClient(pages, { healthy = () => true } = {}) {
+  const calls = [];
+  let selected = null;
+  return {
+    calls,
+    pages,
+    async callTool(name, args) {
+      calls.push([name, args]);
+      if (name === 'list_pages') return { structuredContent: { pages: pages.map((p) => ({ ...p })) } };
+      if (name === 'select_page') { selected = args.pageId; return {}; }
+      if (name === 'close_page') { pages.splice(pages.findIndex((p) => p.id === args.pageId), 1); return {}; }
+      if (name === 'navigate_page') return {};
+      if (name === 'evaluate_script') {
+        const ok = healthy(selected, calls.filter((c) => c[0] === 'navigate_page').length);
+        return { content: [{ type: 'text', text: `\`\`\`json\n${JSON.stringify({ ready: ok, xsrf: ok })}\n\`\`\`` }] };
+      }
+      throw new Error(`tool lạ ${name}`);
+    },
+  };
+}
+const tabUrl = (profile, token) => `${NEUTRAL_URL}#cdp-profile=${profile}&cdp-open=${token}`;
+const noOpen = () => { throw new Error('không được mở tab mới'); };
+
+test('sharedTabsFor chỉ nhận tab trung lập kèm marker của đúng profile', () => {
+  const pages = [
+    { id: 1, url: tabUrl('work', 'ab12') },
+    { id: 2, url: tabUrl('home', 'cd34') },
+    { id: 3, url: `${NEUTRAL_URL}#cdp-profile=work` },
+    { id: 4, url: 'https://datastudio.google.com/reporting/x#cdp-profile=work&cdp-open=ef56' },
+    { id: 5, url: 'https://datastudio.google.com/u/0/navigation/reporting#cdp-profile=work&cdp-open=9a8b' },
+  ];
+  assert.deepEqual(sharedTabsFor(pages, 'work').map((p) => p.id), [1, 5]);
+});
+
+test('acquireSharedTab dùng lại tab có sẵn, đóng tab thừa, không mở tab mới', async () => {
+  const c = fakeTabClient([{ id: 7, url: tabUrl('work', 'ab12') }, { id: 9, url: tabUrl('work', 'cd34') }, { id: 3, url: 'https://example.com/' }]);
+  const tab = await acquireSharedTab(c, { profile: 'work', execFileFn: noOpen, sleepFn: async () => {} });
+  assert.deepEqual(tab, { pageId: 7, homeUrl: tabUrl('work', 'ab12'), reused: true });
+  assert.deepEqual(c.pages.map((p) => p.id), [7, 3]);
+  assert.ok(c.calls.some(([n, a]) => n === 'select_page' && a.pageId === 7 && a.bringToFront === false));
+});
+
+test('acquireSharedTab tải lại tab hỏng một lần rồi dùng tiếp', async () => {
+  const c = fakeTabClient([{ id: 7, url: tabUrl('work', 'ab12') }], { healthy: (_, navs) => navs > 0 });
+  const tab = await acquireSharedTab(c, { profile: 'work', execFileFn: noOpen, sleepFn: async () => {} });
+  assert.equal(tab.reused, true);
+  assert.deepEqual(c.calls.filter(([n]) => n === 'navigate_page').map(([, a]) => a.url), [tabUrl('work', 'ab12')]);
+});
+
+test('acquireSharedTab: tab hỏng hẳn thì đóng và mở tab mới; chưa có tab thì mở', async () => {
+  const c = fakeTabClient([{ id: 7, url: tabUrl('work', 'ab12') }], { healthy: (sel) => sel === 8 });
+  const execFileFn = (bin, args, opts, cb) => {
+    c.pages.push({ id: 8, url: tabUrl('work', 'ff00') });
+    cb(null, JSON.stringify({ bind_selector: 'cdp-open=ff00', profile_marker: 'cdp-profile=work' }));
+  };
+  const tab = await acquireSharedTab(c, { profile: 'work', execFileFn, sleepFn: async () => {} });
+  assert.deepEqual(tab, { pageId: 8, homeUrl: tabUrl('work', 'ff00'), reused: false });
+  assert.deepEqual(c.pages.map((p) => p.id), [8]);
 });

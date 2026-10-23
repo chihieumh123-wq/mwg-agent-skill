@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  CliError, DS_ORIGIN, McpClient, NEUTRAL_URL, editorTabsFor, evaluate, listPages, openAndBind, sleep,
+  CliError, DS_ORIGIN, McpClient, NEUTRAL_URL, acquireSharedTab, editorTabsFor, evaluate, listPages, sleep,
 } from './datastudio-mcp-transport.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ export function parseArgs(argv) {
     const t = rest[i];
     if (!t.startsWith('--')) throw new CliError(`tham số lạ: ${t}`, 2);
     const k = t.slice(2);
-    if (['live', 'no-checkpoint', 'json'].includes(k)) a[k] = true;
+    if (['live', 'no-checkpoint', 'json', 'close-tab'].includes(k)) a[k] = true;
     else { a[k] = rest[i + 1]; i++; }
   }
   return a;
@@ -117,6 +117,29 @@ const filters = ((rc.report.resource.filter || {}).entry || []).map((e) => ({ ke
 return { name: (rc.shareable || {}).name, version: rc.version, pages,
   datasources: cat.map((c) => ({ kind: c.kind, ref: c.alias || c.id, name: c.name, fields: c.fields.length, error: c.error })), filters };`;
 
+/** Phần render chạy khi tab đã ở trang report: đợi vẽ, gom lỗi từng chart, chụp ảnh nếu cần. */
+async function renderOnPage(client, a) {
+  await sleep(Number(a.wait || 12) * 1000);
+  // Lỗi theo từng chart: mỗi chart là div.lego-component có class = componentId. Line/bar/pie vẽ trong
+  // iframe khác origin nên DOM không thấy số — xem bằng --screenshot.
+  const out = await evaluate(client, `() => { const t = document.body.innerText; const ERR = ${J(RENDER_ERRORS)};
+    const errs = ERR.map((e) => [e, t.split(e).length - 1]).filter((x) => x[1] > 0);
+    const charts = [...document.querySelectorAll('div.lego-component')].map((el) => {
+      const id = [...el.classList].find((c) => c.startsWith('cd-')); const tx = el.innerText || '';
+      const err = ERR.find((e) => tx.includes(e));
+      return { id, type: [...el.classList].find((c) => /^(simple-|kpi-|dimension-|generic-)/.test(c)), status: err ? 'ERROR: ' + err : (el.querySelector('iframe') ? 'iframe (xem screenshot)' : (tx.trim() ? 'ok' : 'trống')) };
+    }).filter((c) => c.id);
+    return { url: location.href.split('#')[0].replace(/\\/edit$/, ''), editMode: /\\/edit(?:[?#]|$)/.test(location.href), errors: errs, charts, text: t.slice(0, ${Number(a.chars || 6000)}) }; }`, 60000);
+  if (a.screenshot) {
+    const file = path.resolve(a.screenshot);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    await client.callTool('take_screenshot', { filePath: file, fullPage: true, format: 'png' }, 90000);
+    out.screenshot = file;
+  }
+  console.log(J(out));
+  return out.errors.length ? 1 : 0;
+}
+
 const COMMANDS = {
   async read(client, a, rid) {
     const sum = await run(client, SUMMARY_TAIL(rid), 300000);
@@ -186,27 +209,14 @@ const COMMANDS = {
       pageId = await run(client, `const rc = await RT.getReport(${J(rid)}); const n = rc.navigationInfo.navItems.filter((x) => x.page && x.page.displayName.toLowerCase() === ${J(pageId.toLowerCase())}); if (n.length !== 1) throw new Error('page khớp ' + n.length); return n[0].page.pageId;`);
     }
     const url = `${DS_ORIGIN}/reporting/${rid}${pageId ? '/page/' + pageId : ''}`;
-    await client.callTool('navigate_page', { type: 'url', url }, 90000);
-    await sleep(Number(a.wait || 12) * 1000);
-    // Lỗi theo từng chart: mỗi chart là div.lego-component có class = componentId. Line/bar/pie vẽ trong
-    // iframe khác origin nên DOM không thấy số — xem bằng --screenshot.
-    const out = await evaluate(client, `() => { const t = document.body.innerText; const ERR = ${J(RENDER_ERRORS)};
-      const errs = ERR.map((e) => [e, t.split(e).length - 1]).filter((x) => x[1] > 0);
-      const charts = [...document.querySelectorAll('div.lego-component')].map((el) => {
-        const id = [...el.classList].find((c) => c.startsWith('cd-')); const tx = el.innerText || '';
-        const err = ERR.find((e) => tx.includes(e));
-        return { id, type: [...el.classList].find((c) => /^(simple-|kpi-|dimension-|generic-)/.test(c)), status: err ? 'ERROR: ' + err : (el.querySelector('iframe') ? 'iframe (xem screenshot)' : (tx.trim() ? 'ok' : 'trống')) };
-      }).filter((c) => c.id);
-      return { url: location.href.split('#')[0].replace(/\\/edit$/, ''), editMode: /\\/edit(?:[?#]|$)/.test(location.href), errors: errs, charts, text: t.slice(0, ${Number(a.chars || 6000)}) }; }`, 60000);
-    if (a.screenshot) {
-      const file = path.resolve(a.screenshot);
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      await client.callTool('take_screenshot', { filePath: file, fullPage: true, format: 'png' }, 90000);
-      out.screenshot = file;
+    // Tab nền dùng chung: luôn trả tab về URL trung lập kèm marker, kể cả khi render lỗi giữa chừng,
+    // để lượt sau còn nhận lại được.
+    try {
+      await client.callTool('navigate_page', { type: 'url', url }, 90000);
+      return await renderOnPage(client, a);
+    } finally {
+      try { await client.callTool('navigate_page', { type: 'url', url: client.homeUrl || NEUTRAL_URL }, 60000); } catch { /* lượt sau tự mở tab mới */ }
     }
-    await client.callTool('navigate_page', { type: 'url', url: NEUTRAL_URL }, 60000);
-    console.log(J(out));
-    return out.errors.length ? 1 : 0;
   },
 
   async revisions(client, a, rid) {
@@ -235,14 +245,18 @@ export async function main(argv, deps = {}) {
   const rid = reportIdFrom(a.report);
   const profile = await profileFromConfig(a);
   const client = deps.client || new McpClient({ roots: [process.cwd()] });
-  let pageId = null;
+  let tab = null;
   try {
     await client.connect();
-    ({ pageId } = await openAndBind(client, { profile, url: NEUTRAL_URL }));
-    await sleep(1500);
+    // Tab nền dùng chung: bám lại tab lượt trước để lại, chỉ mở tab mới khi chưa có hoặc tab hỏng.
+    tab = await acquireSharedTab(client, { profile });
+    client.homeUrl = tab.homeUrl;
+    console.error(tab.reused ? 'tab Data Studio: dùng lại tab nền' : 'tab Data Studio: mở tab nền mới (để lại cho lượt sau)');
+    if (!tab.reused) await sleep(1500);
     return await COMMANDS[a._cmd](client, a, rid);
   } finally {
-    if (pageId != null) { try { await client.callTool('close_page', { pageId }, 15000); } catch { /* tab có thể đã đóng */ } }
+    // Giữ tab cho lượt sau; --close-tab khi muốn dọn hẳn.
+    if (tab && a['close-tab']) { try { await client.callTool('close_page', { pageId: tab.pageId }, 15000); } catch { /* tab có thể đã đóng */ } }
     await client.close();
   }
 }

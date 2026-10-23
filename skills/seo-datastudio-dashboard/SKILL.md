@@ -5,7 +5,7 @@ description: Đọc, dựng và sửa dashboard Data Studio / Looker Studio (dat
 
 # Data Studio / Looker Studio dashboard
 
-Skill này đọc và ghi report Data Studio qua CLI `run-datastudio-cli.mjs`. CLI mở 1 tab trung lập
+Skill này đọc và ghi report Data Studio qua CLI `run-datastudio-cli.mjs`. CLI dùng 1 tab trung lập chạy nền
 `datastudio.google.com/navigation/reporting` đúng profile Chrome (qua chrome-profile + chrome-devtools-mcp),
 rồi gọi RPC nội bộ bằng `fetch` trong tab đó. Không có API ghi chính thức: Google đổi frontend là có thể hỏng.
 
@@ -38,7 +38,12 @@ node $S restore   --report <id> --revision <n>
 ```
 
 Exit: 0 ok · 1 lỗi (chưa ghi gì) · 2 sai tham số · 3 guard chặn (report đang mở Edit) · 4 ghi dở dang.
-Mỗi lệnh ~15–60s (mở tab, bám tab, đóng tab). `apply --live` dài: Bash `timeout: 600000`.
+**Tab nền dùng chung.** Lệnh đầu tiên mở tab trung lập ở nền (không nhảy lên trước) và **để lại**; các lệnh sau
+bám lại đúng tab đó theo marker `#cdp-profile=…&cdp-open=…` trong URL, không mở/đóng tab nữa. Đo 23/10/2026: lệnh
+đọc từ 8–9s còn 1–2s. Có nhiều tab dùng chung thì giữ 1, đóng phần thừa. Tab bị Chrome xả bộ nhớ hoặc treo thì tự
+tải lại 1 lần, vẫn hỏng thì đóng và mở tab mới. `render` điều hướng tab sang report rồi luôn trả về URL có marker.
+Đừng tự đóng hay điều hướng tab đó bằng tay; muốn dọn hẳn thì thêm `--close-tab` vào lệnh cuối.
+stderr in `tab Data Studio: dùng lại tab nền` hoặc `mở tab nền mới`. `apply --live` dài: Bash `timeout: 600000`.
 
 ## Quy trình
 

@@ -1,6 +1,7 @@
 /**
  * datastudio-mcp-transport.mjs — nói chuyện với chrome-devtools-mcp qua stdio JSON-RPC,
  * mở tab Data Studio đúng profile bằng chrome-profile, bám đúng tab theo cdp-open=<token>.
+ * Tab đó để lại chạy nền làm tab dùng chung: lượt CLI sau bám lại thay vì mở/đóng tab mới.
  *
  * Rút gọn từ cms-cli-mcp.mjs của các skill CMS (cùng cơ chế, bỏ phần upload file).
  * Skill-sync chỉ mang file bên trong thư mục skill nên không import chéo được.
@@ -304,17 +305,61 @@ export async function bindProfileTab(client, { bindSelector, profileMarker, atte
   throw new CliError(`không thấy tab nào chứa ${bindSelector} sau ${attempts} lần list_pages`);
 }
 
+/**
+ * Tab nền dùng chung: tab trung lập do chrome-profile mở, URL giữ nguyên marker
+ * `#cdp-profile=<profile>&cdp-open=<token>` nên lượt CLI sau nhận lại được đúng tab của đúng profile.
+ * Data Studio tự chuyển `/navigation/reporting` thành `/u/0/navigation/reporting` (đo 23/10/2026).
+ */
+export function sharedTabsFor(pages, profile) {
+  const re = new RegExp(`^${escRe(DS_ORIGIN)}(?:/u/\\d+)?/navigation/reporting#cdp-profile=${escRe(profile)}&cdp-open=[0-9a-f]+$`);
+  return pages.filter((p) => re.test(p.url));
+}
+
+/** Tab còn dùng được: trang đã tải xong và còn cookie XSRF của Data Studio (chỉ kiểm có/không, không đọc giá trị). */
+const TAB_HEALTH_FN = `() => ({ ready: document.readyState === 'complete', xsrf: /(?:^|; )RAP_XSRF_TOKEN=/.test(document.cookie) })`;
+
+async function tabHealthy(client) {
+  try {
+    const h = await evaluate(client, TAB_HEALTH_FN, 20000);
+    return !!(h && h.ready && h.xsrf);
+  } catch { return false; }
+}
+
+/**
+ * Lấy tab nền: có tab dùng chung của profile thì bám lại (dư thì đóng bớt), tab hỏng thì tải lại 1 lần,
+ * vẫn hỏng hoặc chưa có thì mở tab mới. Trả `{ pageId, homeUrl, reused }`; `homeUrl` là URL kèm marker
+ * để lệnh `render` quay tab về sau khi điều hướng sang report.
+ */
+export async function acquireSharedTab(client, { profile, execFileFn, sleepFn = sleep }) {
+  if (!profile) throw new CliError('thiếu profile Chrome (--profile hoặc env DATASTUDIO_CHROME_PROFILE)', 2);
+  const shared = sharedTabsFor(await listPages(client), profile);
+  for (const extra of shared.slice(1)) {
+    try { await client.callTool('close_page', { pageId: extra.id }, 15000); } catch { /* đã đóng */ }
+  }
+  if (shared.length) {
+    const tab = shared[0];
+    await client.callTool('select_page', { pageId: tab.id, bringToFront: false });
+    client.pageId = tab.id;
+    if (await tabHealthy(client)) return { pageId: tab.id, homeUrl: tab.url, reused: true };
+    // Tab bị Chrome xả bộ nhớ hoặc trang treo: tải lại đúng URL (giữ marker) một lần.
+    try {
+      await client.callTool('navigate_page', { type: 'url', url: tab.url }, 60000);
+      await sleepFn(1500);
+      if (await tabHealthy(client)) return { pageId: tab.id, homeUrl: tab.url, reused: true };
+    } catch { /* rơi xuống mở tab mới */ }
+    try { await client.callTool('close_page', { pageId: tab.id }, 15000); } catch { /* đã đóng */ }
+    client.pageId = null;
+  }
+  const { pageId } = await openAndBind(client, { profile, url: NEUTRAL_URL, execFileFn, sleepFn });
+  const page = (await listPages(client)).find((p) => p.id === pageId);
+  return { pageId, homeUrl: page ? page.url : NEUTRAL_URL, reused: false };
+}
+
 /** Mở + bám tab. Bám lỗi thì đóng đúng tab vừa mở (nếu tìm thấy đúng 1) rồi ném lỗi gốc. */
 export async function openAndBind(client, { profile, url = NEUTRAL_URL, execFileFn, sleepFn = sleep }) {
   // Gắn vào trình duyệt TRƯỚC khi mở tab mới: list_pages lần đầu phải attach mọi tab,
   // làm lúc tab Data Studio đang tải dễ treo hơn.
-  const before = await listPages(client);
-  // Tab trung lập do lượt CLI trước để lại (list_pages treo lúc bám → không đóng được). Chỉ đóng tab
-  // đúng URL trung lập + marker của chính profile này; CLI không chạy song song nên không đụng lượt khác.
-  const orphanRe = new RegExp(`^${escRe(NEUTRAL_URL)}#cdp-profile=${escRe(profile)}&cdp-open=[0-9a-f]+$`);
-  for (const p of before.filter((x) => orphanRe.test(x.url))) {
-    try { await client.callTool('close_page', { pageId: p.id }, 15000); } catch { /* đã đóng */ }
-  }
+  await listPages(client);
   const open = await openProfileTab({ profile, url, execFileFn });
   await sleepFn(4000);
   try {
