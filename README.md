@@ -31,6 +31,7 @@ Mỗi skill là một thư mục có `SKILL.md` (chỉ dẫn) và tuỳ chọn `
 | [`onpage-mdm-khai-bao`](skills/onpage-mdm-khai-bao) | Khai báo SEO trên hệ MDM/PIM (thay CMS) cho trang Danh mục, Hãng, Filter/Dòng Filter, Hãng+Filter: tra URL web ra bản ghi, ghi Title/Meta/Keyword/Infobox có khoá rowVersion + backup + đọc lại so từng byte, khôi phục, upload ảnh CDN, chờ web core mới hiện đúng. Sản phẩm PIM: ghi Title/Meta, bài viết (`product_articles`) và đặc điểm nổi bật (`key_features`) — thay cả bài hoặc sửa từng chỗ theo ops có guard sha256; `batch` nhiều việc một kết nối | Node 18+, `chrome-devtools-mcp`, một tab MDM đã đăng nhập, file config (`MDM_CONFIG`) |
 | [`fable-thinking`](skills/fable-thinking) | Quy trình suy luận đa giả định (distilled từ Claude Fable 5): Floor check tránh câu trả lời bẫy, Constraint Loop kiểm soát ràng buộc bề mặt, kiểm chứng bằng chứng trước khi kết luận | — |
 | [`chrome-profile`](skills/chrome-profile) | Mở URL trên đúng profile Google Chrome thật (cookies, session, account) qua CLI `chrome-profile` + gắn token định vị tab chính xác cho Chrome DevTools MCP (kèm hướng dẫn cấu hình DevTools Hub để Allow 1 lần dùng cả ngày) | Python 3.9+, Google Chrome, Chrome DevTools MCP |
+| [`seo-datastudio-dashboard`](skills/seo-datastudio-dashboard) | Đọc, dựng và sửa dashboard Data Studio / Looker Studio bằng RPC nội bộ chạy trong tab Chrome đã đăng nhập: thêm/sửa/xoá page, chart, text, filter, blend, calculated field, đổi theme; dry-run trước khi ghi, tự tạo revision checkpoint và khôi phục được; render kiểm chart lỗi + screenshot. Kèm chuẩn thiết kế dashboard | Node 18+, `chrome-devtools-mcp`, skill `chrome-profile`, profile Chrome có quyền sửa report (`--profile` hoặc `DATASTUDIO_CHROME_PROFILE`) |
 
 
 4 skill `tgdd-infobox-*` và `tgdd-review-outline-infobox` là **bộ rule biên tập**,
@@ -50,6 +51,7 @@ kèm thông báo nếu thiếu biến:
 | `SHEET_GAME_APP_ID`, `SHEET_KINH_NGHIEM_HAY_ID` | `onpage-internal-link` (2 hệ sheet WF đi link) |
 | `SHEET_SHORTCODE_MAU_ID` | `tgdd-top-product-article` (sheet mẫu `categoryid`/`properties` cho shortcode `[sosanh]`) |
 | `MDM_CONFIG` | `onpage-mdm-khai-bao` (đường dẫn file JSON theo mẫu `config.example.json`; hoặc truyền `--config`) |
+| `DATASTUDIO_CHROME_PROFILE` | `seo-datastudio-dashboard` (key profile của `chrome-profile`; hoặc truyền `--profile`) |
 
 ## Cài
 
