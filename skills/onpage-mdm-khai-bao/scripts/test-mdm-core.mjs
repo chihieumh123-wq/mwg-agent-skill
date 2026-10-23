@@ -16,6 +16,7 @@ import { parseArgs } from './mdm-cli.mjs';
 import { normalizeJobs, runBatch, doneKeysFrom } from './mdm-commands-batch.mjs';
 import { MdmSession, AutoSession } from './mdm-browser.mjs';
 import { DirectRunner, DirectUnavailable, isReadOp } from './mdm-direct.mjs';
+import { KeychainTokenCache, TOKEN_MAX_AGE_MS, decodeEntry, encodeEntry, tokenCacheFor } from './mdm-keychain-cache.mjs';
 import vm from 'node:vm';
 import { TimeoutError, CliError } from './cms-cli-mcp.mjs';
 
@@ -346,6 +347,113 @@ console.log('\n# 2 đường: gọi thẳng (direct) + rơi về lái tab');
   await a.s.run([{ api: 'mdm', path: 'dataobject/getlist', body: { q: 1 } }]);
   await a.s.run([{ api: 'mdm', path: 'dataobject/getlist', body: { q: 1 } }]);
   t('cache danh sách tĩnh cũng áp cho đường direct', c === 1);
+}
+
+console.log('\n# Cache token trong Keychain');
+{
+  const DCFG = { ...CFG, uiOrigin: 'https://mdm.test', apiBase: 'https://api.test/mdm/', pimApiBase: 'https://api.test/pim/' };
+  const TAB_TOKEN = 'TAB-' + 'x'.repeat(40);
+  const OLD = 'OLD-' + 'y'.repeat(40);
+  const reply = (obj, status = 200) => new Response(typeof obj === 'string' ? obj : JSON.stringify(obj), { status });
+  const memCache = (initial) => { const c = { enabled: true, value: initial, sets: [], clears: 0,
+    async get() { return c.value; }, async set(v) { c.sets.push(v); c.value = v; return true; }, async clear() { c.clears++; c.value = null; return true; } }; return c; };
+  const mkTab = () => {
+    const log = { connects: 0, lists: 0, tokenReads: 0, evals: 0 };
+    return { pageId: null, log,
+      async connect() { log.connects++; }, async close() {},
+      async callTool(name, args) {
+        if (name === 'list_pages') { log.lists++; return { structuredContent: { pages: [{ id: 7, url: 'https://mdm.test/x' }] } }; }
+        if (name === 'select_page') return {};
+        const wrap = (o) => ({ content: [{ type: 'text', text: '```json\n' + JSON.stringify(o) + '\n```' }] });
+        if (args.function.includes('{ token:')) { log.tokenReads++; return wrap({ token: TAB_TOKEN }); }
+        log.evals++;
+        return wrap({ ok: true, results: [{ ok: true, status: 200, ms: 1, json: { error: false, object: ['tab'] } }] });
+      } };
+  };
+  const quiet = () => {};
+  const authBy = (good) => async (u, i) => (i.headers.authorization === `Bearer ${good}` ? reply({ error: false, object: ['direct'] }) : reply('', 401));
+  const mk = (cache, fetchFn, transport = 'auto') => { const client = mkTab(); return { client, s: new AutoSession(DCFG, { client, transport, fetchFn, tokenCache: cache, log: quiet }) }; };
+
+  let cache = memCache(TAB_TOKEN);
+  let a = mk(cache, authBy(TAB_TOKEN));
+  await a.s.open();
+  const r1 = await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('cache có token → không nối Chrome, đi direct', r1.object[0] === 'direct' && a.client.log.connects === 0 && a.client.log.lists === 0 && a.s.tokenSource === 'cache' && a.s.mode === 'direct');
+
+  cache = memCache(null);
+  a = mk(cache, authBy(TAB_TOKEN));
+  await a.s.open();
+  await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('cache rỗng → đọc token từ tab rồi cất vào cache', a.client.log.tokenReads === 1 && cache.sets.length === 1 && cache.sets[0] === TAB_TOKEN && a.s.tokenSource === 'tab');
+
+  cache = memCache(OLD);
+  a = mk(cache, authBy(TAB_TOKEN));
+  await a.s.open();
+  const r3 = await a.s.post('mdm', 'dataobject/update', {});
+  t('cache bị 401 (cả op ghi) → xoá cache, lấy token mới từ tab, chạy lại đúng op bằng direct', r3.object[0] === 'direct' && cache.clears === 1 && cache.value === TAB_TOKEN && a.s.tokenSource === 'tab' && a.s.mode === 'direct' && a.client.log.tokenReads === 1 && a.client.log.evals === 1 /* chỉ probe */ && a.s.fallbacks.join() === 'auth');
+  const r3b = await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('sau khi làm mới, op tiếp theo vẫn direct', r3b.object[0] === 'direct');
+
+  cache = memCache(TAB_TOKEN);
+  a = mk(cache, async () => reply('', 401));
+  await a.s.open();
+  const r4 = await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('token tab trùng token cache cũng bị 401 → lái tab, cache đã xoá', r4.object[0] === 'tab' && a.s.mode === 'tab' && cache.value === null);
+
+  cache = memCache(OLD);
+  let k = 0;
+  a = mk(cache, async (u, i) => (i.headers.authorization === `Bearer ${OLD}` ? reply('', 401) : (k++ === 0 ? reply('<html>x</html>', 200) : reply({ error: false }))));
+  await a.s.open();
+  const r6 = await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('cache 401 → token mới từ tab, op chạy lại dính lỗi non-json → lái tab nhưng GIỮ token mới trong cache', r6.object[0] === 'tab' && cache.value === TAB_TOKEN && a.s.fallbacks.join() === 'auth,non-json');
+
+  cache = memCache(TAB_TOKEN);
+  a = mk(cache, async () => reply('<html>502</html>', 502));
+  await a.s.open();
+  const r5 = await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('cache + lỗi không phải quyền (HTML 502) → mở tab, lái tab, KHÔNG xoá cache', r5.object[0] === 'tab' && a.client.log.lists === 1 && cache.clears === 0 && cache.value === TAB_TOKEN);
+
+  cache = memCache(OLD);
+  a = mk(cache, async () => reply({}), 'tab');
+  await a.s.open();
+  await a.s.post('mdm', 'dataobject/getinfor', {});
+  t('transport=tab: không đọc, không ghi cache', cache.sets.length === 0 && cache.clears === 0 && a.client.log.tokenReads === 0);
+
+  // KeychainTokenCache với `security` giả
+  const calls = [];
+  let store = null;
+  let mode = 'ok';
+  const fakeExec = (bin, args, opts, cb) => {
+    const call = { bin, args, opts, stdin: '' };
+    calls.push(call);
+    const child = { stdin: { on() {}, end(v) { call.stdin = v; const m = v.match(/-w "([0-9a-f]+)"/); if (m) store = m[1]; setTimeout(() => cb(null, ''), 0); } } };
+    if (args[0] === '-i') return child;
+    setTimeout(() => {
+      if (mode === 'locked') return cb(Object.assign(new Error('timeout'), { killed: true }), '');
+      if (args[0] === 'find-generic-password') return store ? cb(null, store + '\n') : cb(new Error('not found'), '');
+      if (args[0] === 'delete-generic-password') { const had = !!store; store = null; return had ? cb(null, '') : cb(new Error('not found'), ''); }
+      cb(new Error('lệnh lạ'), '');
+    }, 0);
+    return child;
+  };
+  let clock = 1_000_000;
+  const kc = new KeychainTokenCache({ account: 'api.test', execFileFn: fakeExec, now: () => clock });
+  t('Keychain: ghi xong đọc lại đúng token', (await kc.set(TAB_TOKEN)) && (await kc.get()) === TAB_TOKEN);
+  t('Keychain: token KHÔNG nằm trên dòng lệnh (chỉ qua stdin, dạng hex)', calls.every((c) => !c.args.join(' ').includes(TAB_TOKEN)) && !calls.find((c) => c.args[0] === '-i').stdin.includes(TAB_TOKEN));
+  t('Keychain: mọi lệnh security có timeout', calls.every((c) => c.opts.timeout > 0));
+  clock += TOKEN_MAX_AGE_MS + 1;
+  t('Keychain: quá 30 ngày → coi như không có và xoá', (await kc.get()) === null && store === null);
+  clock = 1_000_000;
+  await kc.set(TAB_TOKEN);
+  mode = 'locked';
+  t('Keychain khoá/treo → null, không ném', (await kc.get()) === null);
+  mode = 'ok';
+  store = 'zz-không-phải-hex';
+  t('Keychain: dữ liệu hỏng → null', (await kc.get()) === null);
+  t('decodeEntry(encodeEntry) giữ nguyên', decodeEntry(encodeEntry(TAB_TOKEN, 5)).token === TAB_TOKEN);
+  t('tokenCacheFor: off → không cache; ngoài macOS → không cache; darwin → Keychain theo host API',
+    !tokenCacheFor(DCFG, 'off', 'darwin').enabled && !tokenCacheFor(DCFG, 'on', 'linux').enabled && tokenCacheFor(DCFG, 'on', 'darwin').account === 'api.test');
+  t('tokenCacheFor: giá trị lạ → exit 2', throwsCode(() => tokenCacheFor(DCFG, 'maybe', 'darwin'), 2));
 }
 
 console.log('\n# CLI');

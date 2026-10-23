@@ -4,12 +4,13 @@
  *
  *   node .claude/skills/onpage-mdm-khai-bao/scripts/mdm-cli.mjs <lệnh> [cờ]
  *
- * Lệnh: lookup | read | write | restore | upload | verify-web | pim-find | product-write | product-ops | product-restore | batch   (xem SKILL.md)
+ * Lệnh: lookup | read | write | restore | upload | verify-web | pim-find | product-write | product-ops | product-restore | batch | token-clear   (xem SKILL.md)
  * Exit: 0 ok · 1 lỗi server/đọc lại lệch · 2 tham số sai · 3 ROW_VERSION · 4 không có tab/token · 5 không tra được · 6 verify-web hết giờ
- * --transport auto|tab (hoặc env MDM_TRANSPORT): auto = gọi thẳng HTTP bằng token đọc 1 lần từ tab (RAM, không ghi đĩa), tự rơi về lái tab khi gặp vấn đề; tab = chỉ lái tab, token không rời trang.
+ * --transport auto|tab (hoặc env MDM_TRANSPORT): auto = gọi thẳng HTTP bằng token, tự rơi về lái tab khi gặp vấn đề; tab = chỉ lái tab, token không rời trang.
+ * --token-cache on|off (hoặc env MDM_TOKEN_CACHE): on (mặc định, macOS) = token cất trong Keychain, lệnh sau không cần tab tới khi server trả 401.
  * batch: nhiều việc trong MỘT phiên trình duyệt (một kết nối debug, một lần Chrome hỏi quyền) — exit = exit của việc làm lô dừng.
  *
- * In JSON kết quả ra stdout. Không bao giờ in token (token chỉ sống trong tab MDM).
+ * In JSON kết quả ra stdout. Không bao giờ in token (token chỉ ở tab MDM, RAM tiến trình và Keychain).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +23,7 @@ import { pollUntil } from './mdm-web-verify.mjs';
 import { productWriteCommand, productOpsCommand, productRestoreCommand } from './pim-product-commands.mjs';
 import { loadOpsFile } from './pim-content-ops.mjs';
 import { normalizeJobs, runBatch, saveReadCommand } from './mdm-commands-batch.mjs';
+import { tokenCacheFor } from './mdm-keychain-cache.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPEATABLE = new Set(['set', 'set-file']);
@@ -79,11 +81,12 @@ const needScreen = (a) => {
 async function withSession(cfg, a, fn) {
   const transport = a.transport || process.env.MDM_TRANSPORT || 'auto';
   if (!TRANSPORTS.includes(transport)) throw new MdmError(`--transport phải là ${TRANSPORTS.join(' | ')}`, 2);
-  const s = new AutoSession(cfg, { pageId: a['page-id'], cacheLists: !!a.cacheLists, transport });
+  const tokenCache = tokenCacheFor(cfg, a['token-cache'] || process.env.MDM_TOKEN_CACHE || 'on');
+  const s = new AutoSession(cfg, { pageId: a['page-id'], cacheLists: !!a.cacheLists, transport, tokenCache });
   try {
     await s.open();
     const r = await fn(s);
-    if (r && typeof r === 'object' && !Array.isArray(r)) r.transport = { used: s.mode, fallbacks: s.fallbacks };
+    if (r && typeof r === 'object' && !Array.isArray(r)) r.transport = { used: s.mode, token: s.tokenSource, fallbacks: s.fallbacks };
     return r;
   } finally { await s.close(); }
 }
@@ -96,7 +99,7 @@ export async function main(argv) {
     case 'lookup':
       return withSession(cfg, a, (s) => lookup(s, cfg, need(a, 'url'), undefined, { checkWeb: a['check-web'] === true }));
     case 'pim-find':
-      return withSession(cfg, a, (s) => pimFind(s, cfg, need(a, 'url')));
+      return withSession(cfg, a, (s) => pimFind(s, cfg, need(a, 'url'), undefined, { modelCode: a['model-code'] }));
     case 'read': {
       const screen = needScreen(a);
       return withSession(cfg, a, (s) => saveReadCommand(s, cfg, { screen, id: need(a, 'id'), out: a.out, taskDir: a.out ? null : need(a, 'task-dir') }));
@@ -114,11 +117,11 @@ export async function main(argv) {
       return withSession(cfg, a, (s) => uploadCommand(s, cfg, { file: need(a, 'file'), taskDir: need(a, 'task-dir'), live: !!a.live }));
     case 'product-write': {
       const edits = collectEdits(a.set, a['set-file']);
-      return withSession(cfg, a, (s) => productWriteCommand(s, cfg, { url: need(a, 'url'), edits, taskDir: need(a, 'task-dir'), live: !!a.live }));
+      return withSession(cfg, a, (s) => productWriteCommand(s, cfg, { url: need(a, 'url'), edits, taskDir: need(a, 'task-dir'), live: !!a.live, modelCode: a['model-code'] }));
     }
     case 'product-ops': {
       const spec = loadOpsFile(need(a, 'ops')); // sai file ops → dừng TRƯỚC khi mở kết nối
-      return withSession(cfg, a, (s) => productOpsCommand(s, cfg, { url: need(a, 'url'), spec, taskDir: need(a, 'task-dir'), live: !!a.live }));
+      return withSession(cfg, a, (s) => productOpsCommand(s, cfg, { url: need(a, 'url'), spec, taskDir: need(a, 'task-dir'), live: !!a.live, modelCode: a['model-code'] }));
     }
     case 'product-restore':
       return withSession(cfg, a, (s) => productRestoreCommand(s, cfg, { backupFile: need(a, 'backup'), taskDir: need(a, 'task-dir'), live: !!a.live }));
@@ -154,8 +157,13 @@ export async function main(argv) {
       }
       return { url, verdict: r.verdict, seconds: r.seconds, samples: r.history.length, out: r.out };
     }
+    case 'token-clear': {
+      // Xoá token MDM khỏi Keychain (lệnh sau sẽ lấy lại từ tab). Không nối Chrome.
+      const tc = tokenCacheFor(cfg, 'on');
+      return { status: tc.enabled ? ((await tc.clear()) ? 'CLEARED' : 'NOT_FOUND') : 'NO_CACHE' };
+    }
     default:
-      throw new MdmError(`lệnh "${cmd || ''}" không có — dùng lookup | read | write | restore | upload | verify-web | pim-find | product-write | product-ops | product-restore | batch`, 2);
+      throw new MdmError(`lệnh "${cmd || ''}" không có — dùng lookup | read | write | restore | upload | verify-web | pim-find | product-write | product-ops | product-restore | batch | token-clear`, 2);
   }
 }
 

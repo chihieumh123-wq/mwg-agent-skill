@@ -2,8 +2,8 @@
  * mdm-direct.mjs — đường gọi API MDM/PIM THẲNG từ Node bằng bearer token (không lái tab).
  *
  * Hai đường tiếp cận của skill:
- *   direct  Token đọc MỘT lần từ tab MDM (qua MCP), giữ trong RAM của tiến trình CLI, rồi mọi lệnh
- *           HTTP đi thẳng từ Node (cùng ngữ nghĩa với mdm-page-runner.js). Không ghi token ra đĩa, không in.
+ *   direct  Token lấy từ Keychain (mdm-keychain-cache.mjs) hoặc đọc MỘT lần từ tab MDM (qua MCP), giữ trong RAM, rồi mọi lệnh
+ *           HTTP đi thẳng từ Node (cùng ngữ nghĩa với mdm-page-runner.js). Không in token.
  *   tab     Lái tab bằng chrome-devtools-mcp, fetch chạy trong trang, token không rời tab (đường gốc).
  * Chế độ `auto` (mặc định) đi direct và RƠI VỀ tab khi direct gặp vấn đề — xem DirectUnavailable.
  *

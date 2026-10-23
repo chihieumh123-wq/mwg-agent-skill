@@ -2,7 +2,7 @@
  * mdm-commands-batch.mjs — chạy NHIỀU việc MDM/PIM trong MỘT phiên trình duyệt (lệnh `batch`).
  *
  * Vì sao có: mỗi lần `node mdm-cli.mjs <lệnh>` spawn một chrome-devtools-mcp --autoConnect mới, tức
- * một kết nối debug mới vào Chrome của owner — mỗi kết nối là một lần Chrome có thể hỏi "Allow remote
+ * một kết nối debug mới vào Chrome của người dùng — mỗi kết nối là một lần Chrome có thể hỏi "Allow remote
  * debugging?". Lô 35 bản ghi chạy từng lệnh = 35 kết nối. `batch` mở kết nối ĐÚNG MỘT LẦN cho cả lô.
  *
  * Mọi việc vẫn đi qua đúng hàm của lệnh đơn (writeCommand, productWriteCommand…), nên backup, khoá
@@ -59,6 +59,7 @@ export function normalizeJob(job, i, { taskDir }) {
   if (WRITE_CMDS.has(cmd) && !taskDir) throw new MdmError('batch có việc ghi/khôi phục: thiếu --task-dir', 2);
   const args = { };
   if (cmd === 'lookup' || cmd === 'pim-find') args.url = req('url');
+  if (['pim-find', 'product-write', 'product-ops'].includes(cmd) && job.modelCode != null) args.modelCode = String(job.modelCode);
   if (cmd === 'read' || cmd === 'write' || cmd === 'restore') {
     args.screen = req('screen');
     if (!SCREENS.includes(args.screen)) throw new MdmError(`${where}: screen phải là ${SCREENS.join(' | ')}`, 2);
@@ -116,12 +117,12 @@ async function runOne(s, cfg, j, { taskDir, live }) {
   const a = j.args;
   switch (j.cmd) {
     case 'lookup': return lookup(s, cfg, a.url);
-    case 'pim-find': return pimFind(s, cfg, a.url);
+    case 'pim-find': return pimFind(s, cfg, a.url, undefined, { modelCode: a.modelCode });
     case 'read': return saveReadCommand(s, cfg, { screen: a.screen, id: a.id, out: a.out, taskDir });
     case 'write': return writeCommand(s, cfg, { screen: a.screen, id: a.id, edits: a.edits, taskDir, live });
     case 'restore': return restoreCommand(s, cfg, { backupFile: a.backupFile, screen: a.screen, taskDir, live });
-    case 'product-write': return productWriteCommand(s, cfg, { url: a.url, edits: a.edits, taskDir, live });
-    case 'product-ops': return productOpsCommand(s, cfg, { url: a.url, spec: a.spec, taskDir, live });
+    case 'product-write': return productWriteCommand(s, cfg, { url: a.url, edits: a.edits, taskDir, live, modelCode: a.modelCode });
+    case 'product-ops': return productOpsCommand(s, cfg, { url: a.url, spec: a.spec, taskDir, live, modelCode: a.modelCode });
     case 'product-restore': return productRestoreCommand(s, cfg, { backupFile: a.backupFile, taskDir, live });
     default: throw new MdmError(`cmd ${j.cmd}`, 2);
   }

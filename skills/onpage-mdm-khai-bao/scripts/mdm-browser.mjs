@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpClient, evaluate, pagesFromListResult, CliError, TimeoutError } from './cms-cli-mcp.mjs';
 import { DirectRunner, DirectUnavailable } from './mdm-direct.mjs';
+import { NullTokenCache } from './mdm-keychain-cache.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUNNER = fs.readFileSync(path.join(HERE, 'mdm-page-runner.js'), 'utf8');
@@ -40,10 +41,10 @@ export class MdmSession {
 
   /**
    * list_pages là bước đầu tiên chạm Chrome thật, nên cũng là bước Chrome có thể hiện hộp "Allow remote
-   * debugging?" và chờ owner bấm. Treo ở đây có 2 nguyên nhân không phân biệt được từ ngoài: hộp đang chờ
+   * debugging?" và chờ người dùng bấm. Treo ở đây có 2 nguyên nhân không phân biệt được từ ngoài: hộp đang chờ
    * người, hoặc CDP kẹt tạm (đo 24/09: khởi động lại MCP rồi gọi lại ngay thì qua).
-   * Khởi động lại MCP = mở kết nối mới = có thể HIỆN THÊM một hộp thoại chồng lên hộp cũ (owner đi vắng
-   * quay lại thấy dồn đống). Vì vậy thử lại TRÊN CÙNG tiến trình trước (đúng 1 lần, chờ lâu hơn để owner
+   * Khởi động lại MCP = mở kết nối mới = có thể HIỆN THÊM một hộp thoại chồng lên hộp cũ (người dùng đi vắng
+   * quay lại thấy dồn đống). Vì vậy thử lại TRÊN CÙNG tiến trình trước (đúng 1 lần, chờ lâu hơn để người dùng
    * kịp bấm); chỉ khi vẫn treo mới khởi động lại, đúng 1 lần như cũ.
    */
   async open({ log = (m) => process.stderr.write(`${m}\n`), firstTimeoutMs = 60000, retryTimeoutMs = 90000 } = {}) {
@@ -127,45 +128,106 @@ export class MdmSession {
 }
 
 /**
- * Phiên 2 đường: direct (HTTP thẳng từ Node, token trong RAM) và tab (lái trang). Luôn mở tab trước
- * (cần cho cả hai: lấy token và làm đường rơi về), nên rơi về tab không mở thêm kết nối Chrome nào.
+ * Phiên 2 đường: direct (HTTP thẳng từ Node bằng token) và tab (lái trang).
  *   transport 'auto' (mặc định)  direct; gặp DirectUnavailable thì chuyển sang tab cho phần còn lại của phiên
- *   transport 'tab'              chỉ lái tab, không bao giờ đọc token ra khỏi trang
+ *   transport 'tab'              chỉ lái tab, không bao giờ đọc token ra khỏi trang, không đụng cache
+ *
+ * Cache token (Keychain, xem mdm-keychain-cache.mjs): có token cache thì KHÔNG nối Chrome, chạy direct luôn; tab chỉ
+ * mở khi cần rơi về. Cache bị 401/403 → xoá cache, đọc token mới từ tab, lưu lại, chạy lại đúng op đó (server từ
+ * chối quyền = chưa ghi gì nên gửi lại an toàn). Không có cache → mở tab như cũ, đọc token rồi cất vào cache.
  */
 export class AutoSession extends MdmSession {
-  constructor(cfg, { transport = 'auto', fetchFn, log = (m) => process.stderr.write(`${m}\n`), ...rest } = {}) {
+  constructor(cfg, { transport = 'auto', fetchFn, tokenCache = new NullTokenCache(), log = (m) => process.stderr.write(`${m}\n`), ...rest } = {}) {
     super(cfg, rest);
     if (!['auto', 'tab'].includes(transport)) throw new CliError(`--transport phải là auto | tab (nhận "${transport}")`, 2);
     this.wantTransport = transport;
     this.fetchFn = fetchFn;
+    this.tokenCache = transport === 'auto' ? tokenCache : new NullTokenCache();
     this.log = log;
     this.direct = null;
     this.mode = 'tab';
     this.fallbacks = [];
+    this.tokenSource = null; // 'cache' | 'tab' | null (đường tab)
+    this.openOpts = undefined;
   }
 
   async open(opts) {
-    const page = await super.open(opts);
-    if (this.wantTransport === 'auto') {
-      try {
-        this.direct = new DirectRunner(this.cfg, await this.readToken(), { fetchFn: this.fetchFn });
+    this.openOpts = opts;
+    if (this.wantTransport === 'auto' && this.tokenCache.enabled) {
+      const cached = await this.tokenCache.get();
+      if (cached) {
+        this.direct = new DirectRunner(this.cfg, cached, { fetchFn: this.fetchFn });
         this.mode = 'direct';
-      } catch (e) {
-        this.log(`đường gọi thẳng không dùng được (${e.reason || e.message}) — chạy bằng lái tab`);
-        this.fallbacks.push(e.reason || 'error');
+        this.tokenSource = 'cache';
+        return null; // không nối Chrome
       }
     }
+    const page = await super.open(opts);
+    if (this.wantTransport === 'auto') await this._directFromTab();
     return page;
+  }
+
+  /** Đọc token từ tab (mở tab nếu chưa), chuyển sang direct và cất token vào cache. Trả true nếu được. */
+  async _directFromTab() {
+    try {
+      const token = await this.readToken();
+      this.direct = new DirectRunner(this.cfg, token, { fetchFn: this.fetchFn });
+      this.mode = 'direct';
+      this.tokenSource = 'tab';
+      if (this.tokenCache.enabled && !(await this.tokenCache.set(token))) this.log('không cất được token vào Keychain — lệnh sau sẽ lại đọc từ tab');
+      return true;
+    } catch (e) {
+      this.log(`đường gọi thẳng không dùng được (${e.reason || e.message}) — chạy bằng lái tab`);
+      this.fallbacks.push(e.reason || 'error');
+      this._toTab();
+      return false;
+    }
+  }
+
+  /** Chưa bám tab (phiên mở từ cache) thì bám bây giờ. Không có tab MDM → exit 4 như lệnh thường. */
+  async _ensureTab() {
+    if (this.pageId == null) await super.open(this.openOpts);
+  }
+
+  _toTab() {
+    this.mode = 'tab';
+    this.direct = null; // bỏ token khỏi RAM ngay khi không còn dùng
   }
 
   async _exec(ops, timeoutMs) {
     if (this.mode === 'direct') {
       try { return await this.direct.run(ops); } catch (e) {
         if (!(e instanceof DirectUnavailable)) throw e;
-        this.log(`đường gọi thẳng lỗi (${e.reason}: ${e.message}) — chuyển sang lái tab cho phần còn lại của phiên`);
         this.fallbacks.push(e.reason);
-        this.mode = 'tab';
-        this.direct = null; // bỏ token khỏi RAM ngay khi không còn dùng
+        if (e.reason === 'auth' && this.tokenCache.enabled) await this.tokenCache.clear();
+        if (e.reason === 'auth' && this.tokenSource === 'cache') {
+          this.log('token trong Keychain bị từ chối — lấy token mới từ tab MDM');
+          const old = this.direct.token;
+          this._toTab();
+          await this._ensureTab();
+          if (await this._directFromTab()) {
+            let rejected = this.direct.token === old;
+            if (!rejected) {
+              try { return await this.direct.run(ops); } catch (e2) {
+                if (!(e2 instanceof DirectUnavailable)) throw e2;
+                this.fallbacks.push(e2.reason);
+                rejected = e2.reason === 'auth';
+                // Lỗi khác quyền (mạng, "HTTP 200 không phải JSON" chập chờn): token mới vẫn tốt, giữ trong cache.
+                if (!rejected) this.log(`đường gọi thẳng lỗi (${e2.reason}: ${e2.message}) — chuyển sang lái tab cho phần còn lại của phiên`);
+              }
+            }
+            if (rejected) {
+              // Token tab = token vừa bị từ chối, hoặc token mới cũng 401: đừng để nó nằm lại trong cache.
+              if (this.tokenCache.enabled) await this.tokenCache.clear();
+              this.log('token trong tab cũng bị từ chối — chạy bằng lái tab');
+            }
+            this._toTab();
+          }
+        } else {
+          this.log(`đường gọi thẳng lỗi (${e.reason}: ${e.message}) — chuyển sang lái tab cho phần còn lại của phiên`);
+          this._toTab();
+          await this._ensureTab();
+        }
       }
     }
     return super._exec(ops, timeoutMs);

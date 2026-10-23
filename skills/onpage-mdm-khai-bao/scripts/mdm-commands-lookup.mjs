@@ -142,17 +142,24 @@ export const pimBase = (cfg) => ({ localeCode: 'vi_VN', rootCategoryId: cfg.cate
  * PIM/tên, không khớp ID CMS hay slug. Ép cookie core mới vẫn có lúc rơi node core cũ (không có
  * modelCode) → lấy lại tối đa 6 lần.
  */
-export async function resolveProductPage(s, cfg, url, fetchFn) {
+export async function resolveProductPage(s, cfg, url, fetchFn, opts = {}) {
   const p = parseWebUrl(url, cfg.webOrigin);
   if (p.kind !== 'product') throw new MdmError('cần URL trang sản phẩm /{danh mục}/{slug}', 2);
-  let page;
-  for (let i = 0; i < 6; i++) {
-    page = await fetchCoreMoi(new URL(url, cfg.webOrigin).href, fetchFn);
-    if (page.status === 200 && page.coreMoi) break;
+  let code;
+  if (opts.modelCode != null) {
+    // Trang phần mềm không lộ modelCode: cho phép tra tay mã model trên PIM rồi truyền vào (--model-code / "modelCode" trong batch).
+    code = String(opts.modelCode);
+    if (!/^\d+$/.test(code)) throw new MdmError(`modelCode phải là số, nhận "${opts.modelCode}"`, 2);
+  } else {
+    let page;
+    for (let i = 0; i < 6; i++) {
+      page = await fetchCoreMoi(new URL(url, cfg.webOrigin).href, fetchFn);
+      if (page.status === 200 && page.coreMoi) break;
+    }
+    const m = page.html.match(/modelCode=(\d+)/);
+    if (!m) throw new MdmError(`trang không có modelCode (status ${page.status}, core mới=${page.coreMoi}) — thử lại, hoặc tra tay mã model trên PIM rồi truyền --model-code`, 5);
+    code = m[1];
   }
-  const m = page.html.match(/modelCode=(\d+)/);
-  if (!m) throw new MdmError(`trang không có modelCode (status ${page.status}, core mới=${page.coreMoi}) — thử lại hoặc tra tay trên PIM`, 5);
-  const code = m[1];
   const l = await s.post('pim', 'productvariant/getlist', { ...pimBase(cfg), pageSize: 20, keyword: code, pageIndex: 1,
     filterParams: [{ key: 'rootCategoryId', value: cfg.category.rootId }, { key: 'searchType', value: 2 }] });
   const model = (l.object || []).find((o) => o.code === code);
@@ -165,8 +172,8 @@ export async function resolveProductPage(s, cfg, url, fetchFn) {
  * Trang SP → bản ghi PIM (chỉ đọc; ghi title/description bằng product-write). SP có biến thể:
  * field SEO nằm ở LÁ Màu, 1 trang = mọi lá Màu của 1 Phiên bản.
  */
-export async function pimFind(s, cfg, url, fetchFn) {
-  const r = await resolveProductPage(s, cfg, url, fetchFn);
+export async function pimFind(s, cfg, url, fetchFn, opts = {}) {
+  const r = await resolveProductPage(s, cfg, url, fetchFn, opts);
   let leaves = r.nodes.filter((n) => n.lvl === Math.max(...r.nodes.map((x) => x.lvl)));
   if (!leaves.length) {
     const g = await s.post('pim', 'model/getinfor', { ...pimBase(cfg), id: r.model.id, isTranslation: true, categoryId: null });

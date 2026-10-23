@@ -56,10 +56,11 @@ Mọi số liệu dưới đây đo bằng ghi/đọc thật trên hệ thống,
 | Chưa đo | Hộp có hiện ở bước `select_page`/`evaluate_script` lên tab ẩn danh (khác `list_pages`)? Cần tab MDM ẩn danh đang mở để đo; lúc đo cửa sổ ẩn danh đã đóng (exit 4) |
 | Không dùng được | `--browserUrl`/cổng debug cố định: README chrome-devtools-mcp nói Chrome bắt buộc profile riêng khi mở cổng bằng cờ `--remote-debugging-port` → mất phiên đăng nhập MDM ẩn danh của người dùng. `--wsEndpoint` tới cổng hiện có vẫn qua đúng bước duyệt |
 | `batch` chạy thật (06/10, tab MDM ẩn danh đã mở) | 5 lookup chỉ-đọc trong 1 phiên: 13s tổng, 5/5 OK; lookup đầu 1,9s và 6,7s (nạp cây danh mục/hãng/filter), 3 lookup sau ~0,2s nhờ cache |
-| Token MDM | Chuỗi đục (không phải JWT), chỉ có `access_token`/`token_type`/`expires_in`/`scope`, **không có refresh token**; `expires_in` = 62.685s (~17,4 giờ). Nằm ở IndexedDB của tab ẩn danh (ẩn danh = chỉ trong RAM, không xuống đĩa) |
-| API gọi thẳng từ Node | Host API (cả MDM lẫn PIM) trả 401 + `WWW-Authenticate` sau ~0,2s khi không kèm token → mạng không chặn, không vướng CORS. Hướng gọi thẳng khả thi — đã làm thành đường `direct` (token đọc 1 lần từ tab vào RAM, không đĩa) |
+| Token MDM | Chuỗi đục (không phải JWT), chỉ có `access_token`/`token_type`/`expires_in`/`scope`, **không có refresh token**. 06/10 tab ẩn danh đọc ra `expires_in` 62.685s; **23/10 tab thường đọc ra 2.591.999s = 30 ngày** — dùng số 30 ngày. Phiên đăng nhập 09/10 vẫn ghi được ngày 23/10, tức token sống ít nhất 14 ngày (IndexedDB không lưu giờ cấp). JWT Keycloak `kc_tokens` trong localStorage chỉ sống 9 giờ — không phải token API dùng |
+| API gọi thẳng từ Node | Host API (cả MDM lẫn PIM) trả 401 + `WWW-Authenticate` sau ~0,2s khi không kèm token → mạng không chặn, không vướng CORS. Hướng gọi thẳng khả thi — đã làm thành đường `direct` |
 | Direct vs tab chạy thật (06/10) | `batch` 5 lookup chỉ-đọc: kết quả giống hệt từng byte ở cả 2 đường; thời gian ngang nhau (17,8s vs 14,8s, nghẽn ở server, không ở đường truyền). Phá token trong RAM → 401 → tự rơi về tab đúng 1 lần, lookup vẫn ra bản ghi |
-| Cách giảm | `batch` (1 kết nối cho cả lô) |
+| Cache token Keychain (23/10) | `security` ghi ~34ms, đọc ~20ms, không bật hộp hỏi. `lookup` dùng cache: 3/3 lần `direct` + `token: cache`, 12–17s (thời gian server). Cất token hỏng → 401 → làm mới từ tab → OK. Một lần op chạy lại sau làm mới dính "HTTP 200 không phải JSON" (lỗi chập chờn phía server, cả đường tab cũng gặp) — code giữ token mới, không xoá cache |
+| Cách giảm | Cache token Keychain (lệnh không nối Chrome) + `batch` (1 kết nối cho cả lô khi cần tab) |
 
 ## Bài viết SP trên PIM (đo 09/10/2026)
 
@@ -81,7 +82,7 @@ tên; không có API xoá. Ô bài viết SP trên PIM không nhận `.webp` (MD
    thị (mới đo ghi chữ + comment HTML).
 2. Độ trễ lên web của **Danh mục** và **Hãng** (mới đo Filter).
 3. Bỏ key với `datatobject`/`datarelation` (giả định giống `dataobject`; skill chặn rơi key nên không ảnh hưởng).
-4. Token hết hạn sau bao lâu.
+4. Giờ hết hạn thật của token MDM (khai báo 30 ngày; mới thấy còn sống sau 14 ngày).
 5. Trang Hãng+Filter: field `*_brand_filter` dùng chung cho mọi hãng — chưa có cách khai riêng 1 hãng.
 6. Chiều đồng bộ CMS ↔ PIM của SP và lịch chạy (sửa CMS có đè PIM không). Độ trễ chính xác PIM → core mới của SP.
 7. Bài viết SP (`product_articles`) trên core mới lấy từ PIM hay CMS, và độ trễ — chưa đo bằng một lần sửa có

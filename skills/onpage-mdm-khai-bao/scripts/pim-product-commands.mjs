@@ -63,10 +63,10 @@ const show = (v) => (v == null ? null : v.length <= 200 ? v : { len: v.length, s
  * `derive(targets)` (dùng bởi product-ops): tính `edits` từ nội dung VỪA ĐỌC của các bản ghi đích, trả
  * {edits, ops} hoặc {status:'ALREADY'}. Không có derive thì `edits` là giá trị thay nguyên.
  */
-export async function productWriteCommand(s, cfg, { url, edits, taskDir, live, fetchFn, derive }) {
+export async function productWriteCommand(s, cfg, { url, edits, taskDir, live, fetchFn, derive, modelCode }) {
   if (!taskDir) throw new MdmError('thiếu --task-dir (backup và kết quả lưu trong task)', 2);
   if (!derive) applyProductEdits({}, edits); // kiểm field/giá trị trước khi gọi mạng
-  const resolved = await resolveProductPage(s, cfg, url, fetchFn);
+  const resolved = await resolveProductPage(s, cfg, url, fetchFn, { modelCode });
   const { kind, model, targets } = await loadTargets(s, cfg, resolved);
   const head = { url, modelCode: resolved.code, modelName: resolved.model.name, kind };
   let ops;
@@ -127,9 +127,9 @@ export async function productWriteCommand(s, cfg, { url, edits, taskDir, live, f
  * Sửa từng chỗ trong bài viết SP (product_articles / key_features) theo file ops đã fact-check.
  * spec = validateOpsSpec(...). Mọi bản ghi đích phải đang đúng bản đã fact-check (sha256) — lệch là exit 3.
  */
-export async function productOpsCommand(s, cfg, { url, spec, taskDir, live, fetchFn }) {
+export async function productOpsCommand(s, cfg, { url, spec, taskDir, live, fetchFn, modelCode }) {
   return productWriteCommand(s, cfg, {
-    url, taskDir, live, fetchFn,
+    url, taskDir, live, fetchFn, modelCode,
     derive: (targets) => {
       const befores = targets.map((t) => ({ label: label(t), value: rawGet(t.info.rawValues, spec.field) ?? '' }));
       const p = planOps(spec, befores);
