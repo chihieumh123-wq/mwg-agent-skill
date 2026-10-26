@@ -1,0 +1,5 @@
+Top bán chạy (xếp hạng theo doanh số tháng tại TGDĐ):
+- 1. Tiêu chí chọn mua [sản phẩm] (đoạn ngắn 2-3 dòng hoặc bảng 2 cột Tiêu chí | Lưu ý chọn mua)
+- 2. TOP [xx] [sản phẩm] bán chạy nhất tháng tại Thế Giới Di Động: mở đầu bằng 1 box info gồm 2 bullet: "Danh sách dựa trên dữ liệu bán hàng tại Thế Giới Di Động" và "Lưu ý: giá cập nhật ngày {ngay}, có thể thay đổi" (chung 1 box) (bảng tổng hợp có hình do hệ thống chèn ngay sau box) → mỗi sản phẩm 1 H4 (shortcode do hệ thống chèn dưới H4). Trong H4 có box info thông số 4-6 dòng + 2-3 đoạn nêu lý do bán chạy và đối tượng phù hợp
+- 3. Một số câu hỏi liên quan: 2-4 câu hỏi người mua hay thắc mắc về các dòng bán chạy, mỗi câu 1 H4 trả lời ngắn gọn 40-60 từ
+- (Mục "Mua ... tại Thế Giới Di Động" KHÔNG nằm trong outline: hệ thống tự chèn block chuẩn ngay trước mục câu hỏi liên quan khi bài có sản phẩm đang kinh doanh)

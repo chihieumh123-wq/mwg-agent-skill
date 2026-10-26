@@ -1,0 +1,5 @@
+Tra thông số kỹ thuật CHÍNH THỨC của từng sản phẩm trong TỪ KHÓA (tự xác định các sản phẩm cần so sánh hoặc giới thiệu từ từ khóa). Với mỗi sản phẩm trả về theo mẫu:
+## Tên sản phẩm (ngày ra mắt hoặc trạng thái: đã bán/chưa bán)
+Thiết kế và trọng lượng | Màn hình | Chip và bộ nhớ (RAM, bộ nhớ trong, các phiên bản) | Camera | Pin và sạc | Kết nối (SIM, 5G, Wi-Fi, Bluetooth, cổng, NFC) | Phần mềm | Khác (chống nước, bảo mật, loa)
+Mỗi thông số 1 dòng dạng "- Tên thông số: giá trị (đúng đơn vị) [nguồn: URL]".
+Quy tắc: ưu tiên trang chính thức của hãng (bản Việt Nam nếu có), sau đó trang công nghệ uy tín (gsmarena, nanoreview, notebookcheck, androidauthority...). Chỉ ghi thông số có trong nguồn, không suy đoán, không làm tròn; thiếu thì ghi "Không tìm thấy". Không dùng tin đồn, rò rỉ hay thông số dự kiến: sản phẩm chưa có thông số chính thức thì ghi "Chưa có thông số chính thức". Bản Việt Nam khác bản toàn cầu thì ghi riêng từng bản. Nguồn mâu thuẫn thì ghi cả hai giá trị kèm nguồn. Không viết lời dẫn, không nhận xét, không so sánh. Tối đa 40 dòng cho mỗi sản phẩm.

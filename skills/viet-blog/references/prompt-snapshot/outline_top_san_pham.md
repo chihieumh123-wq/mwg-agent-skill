@@ -1,0 +1,6 @@
+Top sản phẩm (giúp người đọc so sánh và chọn theo nhu cầu/giá/hãng/tiêu chí):
+- 1. Tiêu chí chọn mua [sản phẩm]: bảng 2 cột Tiêu chí | Nội dung lưu ý (3-5 tiêu chí ngắn gọn, bám sát nhu cầu thực tế và từ khóa)
+- 2. TOP [xx] [sản phẩm] [điểm nhấn theo từ khóa/nhu cầu] tại Thế Giới Di Động: mở đầu bằng 1 box info gồm 2 bullet: "Tiêu chí chọn sản phẩm: ..." và "Lưu ý: giá cập nhật ngày {ngay}, có thể thay đổi" (chung 1 box) (bảng tổng hợp có hình do hệ thống chèn ngay sau box, không tự lập bảng) → mỗi sản phẩm 1 H4 (tên máy có thể kèm điểm sáng nổi bật nếu phù hợp, shortcode sản phẩm do hệ thống chèn dưới H4). Trong H4: box info thông số 4-6 dòng → 2-3 đoạn phân tích trải nghiệm thực tế (lý do lọt TOP, thiết kế, màn hình, hiệu năng, hợp với ai)
+- (Mục bổ sung nếu có đặt sau mục 2, trước mục Mua)
+- 3. Một số câu hỏi liên quan khi chọn mua [sản phẩm]: 2-4 câu hỏi phụ người đọc hay băn khoăn nhất, mỗi câu 1 H4 trả lời dứt khoát 40-60 từ ngay câu đầu
+- (Mục "Mua ... tại Thế Giới Di Động" KHÔNG nằm trong outline: hệ thống tự chèn block chuẩn ngay trước mục câu hỏi liên quan khi bài có sản phẩm đang kinh doanh)
