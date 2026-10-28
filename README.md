@@ -17,6 +17,8 @@ Mỗi skill là một thư mục có `SKILL.md` (chỉ dẫn) và tuỳ chọn `
 | [`seo-skill-sync`](skills/seo-skill-sync) | Đồng bộ skill một chiều từ surface canonical ra các surface khác và kiểm parity | Node |
 | [`tgdd-bai-pr-bao-ngoai`](skills/tgdd-bai-pr-bao-ngoai) | Viết bài PR đăng báo (booking PR) giọng kể chuyện 800-1000 chữ, rồi giao ra một thư mục Drive có Google Doc rich text (ảnh inline, link click được) — kèm linter và một gate fact-check bắt buộc | Python, ImageMagick, `gws` CLI |
 | [`seo-gsc-rank-check`](skills/seo-gsc-rank-check) | Lấy thứ hạng keyword từ Google Search Console, chọn URL tốt nhất theo impressions, ghi ngược vào Google Sheet bất kỳ (mọi cột là tham số CLI) | Python, `gws` CLI, MCP `google-search-console` |
+| [`gsc-index-check`](skills/gsc-index-check) | Kiểm tra trạng thái index của URL qua Google Search Console URL Inspection, chỉ đọc | Project checker đã cài, quyền GSC chỉ đọc |
+| [`gsc-request-indexing`](skills/gsc-request-indexing) | Gửi yêu cầu Google crawl lại URL qua giao diện Search Console, có bước xác nhận danh sách trước khi gửi | Project checker đã cài, Chrome đăng nhập GSC |
 | [`content-html-optimizer`](skills/content-html-optimizer) | Tối ưu HTML bài viết: xếp ảnh vào đúng section, điền alt/title/caption, chèn internal link từ Google Sheet với chống trùng và chống cắt chữ | Python, `gws` CLI |
 | [`image-ai-generate`](skills/image-ai-generate) | Sinh ảnh minh hoạ cho bài bằng OpenAI image API, dùng ảnh sản phẩm làm reference, resize và đóng logo | Python, `OPENAI_API_KEY` |
 | [`tgdd-infobox-nganh-hang`](skills/tgdd-infobox-nganh-hang) | Viết/audit Infobox cho trang ngành hàng tổng | — |
